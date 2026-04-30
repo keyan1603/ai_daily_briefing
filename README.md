@@ -47,8 +47,8 @@ All parallel calls use `Promise.allSettled()` — if one agent fails, the rest c
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/daily-briefing.git
-cd daily-briefing
+git clone https://github.com/keyan1603/ai_daily_briefing.git
+cd ai_daily_briefing
 npm install
 ```
 
@@ -98,6 +98,7 @@ APP_URL=http://localhost:3000
 ### Step 6 — Run locally
 
 ```bash
+npm run build
 npm run dev
 ```
 
@@ -213,4 +214,4 @@ daily-briefing/
 
 ## 🙏 Credits
 
-Built as a portfolio/demo project showcasing multi-agent AI architecture patterns.
+Built as a portfolio/demo project by Karthikeyan Manickavasagam showcasing multi-agent AI architecture patterns.
