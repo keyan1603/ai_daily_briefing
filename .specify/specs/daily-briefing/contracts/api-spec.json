@@ -1,0 +1,448 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AI Daily Briefing API",
+    "description": "Multi-agent API for the AI Daily Briefing system. All routes are Next.js App Router serverless functions. Server-to-server calls use APP_URL as the base.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Karthikeyan Manickavasagam",
+      "url": "https://github.com/keyan1603/ai_daily_briefing"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development"
+    },
+    {
+      "url": "https://your-app.vercel.app",
+      "description": "Production (Vercel)"
+    }
+  ],
+  "paths": {
+    "/api/briefing": {
+      "post": {
+        "summary": "Master Orchestrator — Generate full daily briefing",
+        "description": "Coordinates all agents in parallel. Calls /api/weather, /api/news, Calendarific, and /api/recommend. Returns the complete BriefingResponse. Always returns 200 — degraded data is used when any agent fails.",
+        "operationId": "postBriefing",
+        "tags": ["Orchestrator"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BriefingRequest"
+              },
+              "example": {
+                "location": {
+                  "lat": 13.0827,
+                  "lon": 80.2707,
+                  "city": "Chennai",
+                  "state": "Tamil Nadu",
+                  "country": "India",
+                  "countryCode": "IN",
+                  "locality": "Adyar"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Briefing generated successfully (may include fallback data if agents degraded)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "data": { "$ref": "#/components/schemas/BriefingResponse" },
+                    "durationMs": { "type": "integer", "description": "Total pipeline duration in ms", "example": 4823 }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Location missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "error": "Location is required" }
+              }
+            }
+          },
+          "500": {
+            "description": "Unrecoverable orchestrator error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/weather": {
+      "get": {
+        "summary": "Weather Agent — Fetch real-time weather from Open-Meteo",
+        "description": "Fetches current conditions and 5-day forecast. No API key required. Responses are cached for 15 minutes by Next.js data cache.",
+        "operationId": "getWeather",
+        "tags": ["Agents"],
+        "parameters": [
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "number", "minimum": -90, "maximum": 90 },
+            "description": "Latitude in decimal degrees",
+            "example": 13.0827
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "number", "minimum": -180, "maximum": 180 },
+            "description": "Longitude in decimal degrees",
+            "example": 80.2707
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Weather data retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "data": { "$ref": "#/components/schemas/WeatherData" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "lat or lon missing",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "error": "lat and lon are required" }
+              }
+            }
+          },
+          "500": {
+            "description": "Open-Meteo unavailable",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/news": {
+      "get": {
+        "summary": "News Agent — Fetch and rank localised news",
+        "description": "Three-tier pipeline: (A) NewsData.io + AI ranking, (B) AI-generated local news, (C) static fallback. Always returns 3 articles. Source is indicated in the response.",
+        "operationId": "getNews",
+        "tags": ["Agents"],
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "ISO 3166-1 alpha-2 country code (lowercase)",
+            "example": "in"
+          },
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "City name for local relevance ranking",
+            "example": "Chennai"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "State/province name for regional relevance",
+            "example": "Tamil Nadu"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Up to 3 news articles, always returned (degrades to static on all failures)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/NewsArticle" },
+                      "maxItems": 3
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["newsdata", "ai-generated", "static", "static-error"],
+                      "description": "Indicates which pipeline path produced the articles"
+                    }
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "source": "ai-generated",
+                  "data": [
+                    {
+                      "title": "Chennai Corporation Approves Stormwater Drain Upgrades",
+                      "description": "The Greater Chennai Corporation has approved an emergency tender...",
+                      "url": "#",
+                      "source": "The Hindu",
+                      "publishedAt": "2026-05-09T06:00:00.000Z",
+                      "sentiment": "positive",
+                      "category": "local",
+                      "relevanceScore": 95
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recommend": {
+      "post": {
+        "summary": "Recommendation Agent — Run 5 Claude sub-agents in parallel",
+        "description": "Consumes aggregated weather, news, location, and holiday data. Runs Sub-Agents A–E in parallel via Promise.allSettled. Each sub-agent has an independent rule-based fallback.",
+        "operationId": "postRecommend",
+        "tags": ["Agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RecommendPayload" },
+              "example": {
+                "weather": {
+                  "temperature": 34,
+                  "feelsLike": 38,
+                  "humidity": 72,
+                  "windSpeed": 14,
+                  "weatherCode": 2,
+                  "description": "Partly cloudy",
+                  "icon": "⛅",
+                  "uvIndex": 8,
+                  "precipitation": 0,
+                  "isRaining": false,
+                  "forecast": []
+                },
+                "news": [],
+                "location": {
+                  "lat": 13.0827,
+                  "lon": 80.2707,
+                  "city": "Chennai",
+                  "state": "Tamil Nadu",
+                  "country": "India",
+                  "countryCode": "IN"
+                },
+                "isHoliday": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recommendations assembled (may use fallback values per module)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": { "$ref": "#/components/schemas/RecommendResponse" }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unrecoverable recommendation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Location": {
+        "type": "object",
+        "required": ["lat", "lon", "city", "state", "country", "countryCode"],
+        "properties": {
+          "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+          "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "country": { "type": "string" },
+          "countryCode": { "type": "string", "pattern": "^[A-Z]{2}$" },
+          "locality": { "type": "string" }
+        }
+      },
+      "WeatherForecast": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "maxTemp": { "type": "number" },
+          "minTemp": { "type": "number" },
+          "precipitationChance": { "type": "number", "minimum": 0, "maximum": 100 },
+          "weatherCode": { "type": "integer" }
+        }
+      },
+      "WeatherData": {
+        "type": "object",
+        "properties": {
+          "temperature": { "type": "number", "description": "Current temp in °C" },
+          "feelsLike": { "type": "number" },
+          "humidity": { "type": "number", "minimum": 0, "maximum": 100 },
+          "windSpeed": { "type": "number", "description": "km/h" },
+          "weatherCode": { "type": "integer", "description": "WMO code" },
+          "description": { "type": "string" },
+          "icon": { "type": "string", "description": "Emoji icon" },
+          "uvIndex": { "type": "number", "minimum": 0 },
+          "precipitation": { "type": "number", "description": "mm" },
+          "isRaining": { "type": "boolean" },
+          "forecast": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/WeatherForecast" },
+            "maxItems": 5
+          }
+        }
+      },
+      "NewsArticle": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "url": { "type": "string" },
+          "source": { "type": "string" },
+          "publishedAt": { "type": "string", "format": "date-time" },
+          "sentiment": { "type": "string", "enum": ["positive", "negative", "neutral"] },
+          "category": { "type": "string" },
+          "relevanceScore": { "type": "integer", "minimum": 0, "maximum": 100 }
+        }
+      },
+      "HolidayInfo": {
+        "type": "object",
+        "properties": {
+          "isHoliday": { "type": "boolean" },
+          "holidayName": { "type": "string" },
+          "holidayType": { "type": "string" }
+        }
+      },
+      "ClothingRecommendation": {
+        "type": "object",
+        "properties": {
+          "outfit": { "type": "string" },
+          "items": { "type": "array", "items": { "type": "string" } },
+          "accessories": { "type": "array", "items": { "type": "string" } },
+          "reasoning": { "type": "string" },
+          "colorPalette": { "type": "string" },
+          "umbrella": { "type": "boolean" },
+          "jacket": { "type": "boolean" },
+          "raincoat": { "type": "boolean" }
+        }
+      },
+      "SafetyAssessment": {
+        "type": "object",
+        "properties": {
+          "isSafe": { "type": "boolean" },
+          "level": { "type": "string", "enum": ["safe", "caution", "warning", "danger"] },
+          "summary": { "type": "string" },
+          "alerts": { "type": "array", "items": { "type": "string" }, "maxItems": 3 }
+        }
+      },
+      "AgentSources": {
+        "type": "object",
+        "properties": {
+          "clothing": { "type": "string", "enum": ["ai", "fallback"] },
+          "safety": { "type": "string", "enum": ["ai", "fallback"] },
+          "greeting": { "type": "string", "enum": ["ai", "fallback"] },
+          "officeAdvice": { "type": "string", "enum": ["ai", "fallback"] },
+          "newsSummary": { "type": "string", "enum": ["ai", "fallback"] },
+          "news": { "type": "string", "enum": ["ai", "fallback"] }
+        }
+      },
+      "BriefingResponse": {
+        "type": "object",
+        "properties": {
+          "greeting": { "type": "string" },
+          "dayContext": { "type": "string" },
+          "weather": { "$ref": "#/components/schemas/WeatherData" },
+          "holiday": { "$ref": "#/components/schemas/HolidayInfo" },
+          "clothing": { "$ref": "#/components/schemas/ClothingRecommendation" },
+          "safety": { "$ref": "#/components/schemas/SafetyAssessment" },
+          "news": { "type": "array", "items": { "$ref": "#/components/schemas/NewsArticle" }, "maxItems": 3 },
+          "newsSummary": { "type": "string" },
+          "officeAdvice": { "type": "string" },
+          "generatedAt": { "type": "string", "format": "date-time" },
+          "location": { "$ref": "#/components/schemas/Location" },
+          "sources": { "$ref": "#/components/schemas/AgentSources" }
+        }
+      },
+      "BriefingRequest": {
+        "type": "object",
+        "required": ["location"],
+        "properties": {
+          "location": { "$ref": "#/components/schemas/Location" }
+        }
+      },
+      "RecommendPayload": {
+        "type": "object",
+        "required": ["weather", "news", "location", "isHoliday"],
+        "properties": {
+          "weather": { "$ref": "#/components/schemas/WeatherData" },
+          "news": { "type": "array", "items": { "$ref": "#/components/schemas/NewsArticle" } },
+          "location": { "$ref": "#/components/schemas/Location" },
+          "isHoliday": { "type": "boolean" },
+          "holidayName": { "type": "string" }
+        }
+      },
+      "RecommendResponse": {
+        "type": "object",
+        "properties": {
+          "greeting": { "type": "string" },
+          "dayContext": { "type": "string" },
+          "clothing": { "$ref": "#/components/schemas/ClothingRecommendation" },
+          "safety": { "$ref": "#/components/schemas/SafetyAssessment" },
+          "officeAdvice": { "type": "string" },
+          "newsSummary": { "type": "string" },
+          "sources": { "$ref": "#/components/schemas/AgentSources" },
+          "isOfficeDay": { "type": "boolean" },
+          "isHoliday": { "type": "boolean" },
+          "holidayName": { "type": "string" },
+          "dayName": { "type": "string" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        }
+      }
+    }
+  },
+  "tags": [
+    { "name": "Orchestrator", "description": "Master coordination layer" },
+    { "name": "Agents", "description": "Individual specialist agents" }
+  ]
+}
